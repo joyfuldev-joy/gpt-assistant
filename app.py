@@ -17,7 +17,7 @@ st.title("📚 Custom RAG Chatbot")
 
 # 📎 GitHub 링크 추가
 with st.sidebar:
-    st.markdown("🔗 [GitHub Repository](https://github.com/yourusername/yourrepo)")
+    st.markdown("🔗 [GitHub Repository](https://github.com/joyfuldev-joy/fullstack-gpt-challenge5)")
     api_key = st.text_input("Enter your OpenAI API Key", type="password")
     uploaded_file = st.file_uploader("Upload your document", type=["pdf", "txt", "docx"])
     
