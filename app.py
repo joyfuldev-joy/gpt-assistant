@@ -34,6 +34,10 @@ os.environ["OPENAI_API_KEY"] = api_key
 @st.cache_data(show_spinner="Embedding document...")
 def embed_file(file):
     file_path = f"./.cache/files/{file.name}"
+     # ✅ 경로 폴더가 없으면 생성
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+    # ✅ 파일 저장
     with open(file_path, "wb") as f:
         f.write(file.read())
 
