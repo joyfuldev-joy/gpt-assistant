@@ -91,7 +91,7 @@ if user_input:
     with st.spinner("🤖 Thinking..."):
         run = openai.beta.threads.runs.create(
             thread_id=thread.id,
-            assistant_id=ASSISTANT_ID
+            assistant_id="asst_DiBjcIwZ5CZXZ05cKWmmd9u7"
         )
 
         while True:
