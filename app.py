@@ -1,125 +1,110 @@
+import openai
 import streamlit as st
-from langchain.document_loaders.sitemap import SitemapLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores.faiss import FAISS
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.chat_models import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema.runnable import RunnableLambda, RunnablePassthrough
-from bs4 import BeautifulSoup
+import os
 
-# -------------------- SETTINGS --------------------
-PRODUCTS = {
-    "AI Gateway": "ai-gateway",
-    "Vectorize": "vectorize",
-    "Workers AI": "workers-ai"
-}
-SITEMAP_URL = "https://developers.cloudflare.com/sitemap-0.xml"
+# --------------------- 🌟 UI 구성 ---------------------
+st.set_page_config(page_title="GraduationGPT", page_icon="🎓")
+st.title("🎓 Graduation Assistant")
 
-# -------------------- PROMPTS --------------------
-answer_prompt = ChatPromptTemplate.from_template("""
-Using ONLY the following context, answer the user's question. If you don't know, say you don't know.
-Then, give a score between 0 and 5 based on how well the answer matches the question.
-
-Context: {context}
-
-Question: {question}
-""")
-
-choose_prompt = ChatPromptTemplate.from_messages([
-    (
-        "system",
-        "Use the highest-scoring and most recent answers to generate a final answer. Cite all sources as-is.\n\nAnswers:\n{answers}"
-    ),
-    ("human", "{question}")
-])
-
-# -------------------- STREAMLIT SETUP --------------------
-st.set_page_config(page_title="SiteGPT - Cloudflare", page_icon="🧠")
-st.title("📘 SiteGPT for Cloudflare Docs")
-
+# Sidebar 구성
 with st.sidebar:
-    st.markdown("## 🔑 OpenAI API Key")
-    openai_api_key = st.text_input("Enter your OpenAI API key", type="password")
+    st.markdown("### 🔑 Enter your OpenAI API Key")
+    openai_api_key = st.text_input("API Key", type="password")
 
-    st.markdown("## 📂 Select Product")
-    product = st.selectbox("Choose a Cloudflare product", list(PRODUCTS.keys()))
+    st.markdown("### 📎 Upload a .txt file")
+    uploaded_file = st.file_uploader("Choose a file", type=["txt"])
 
     st.markdown("---")
-    st.markdown("🔗 [View on GitHub](https://github.com/yourusername/cloudflare-sitegpt)")
+    st.markdown("🔗 [View on GitHub](https://github.com/joyfuldev-joy/gpt-assistant.git)")
 
 if not openai_api_key:
     st.warning("Please enter your OpenAI API key.")
     st.stop()
 
-# -------------------- GPT MODEL --------------------
-llm = ChatOpenAI(
-    temperature=0.1,
-    streaming=True,
-    openai_api_key=openai_api_key,
-    model="gpt-3.5-turbo-1106"
-)
+openai.api_key = openai_api_key
 
-# -------------------- HTML PARSER --------------------
-def parse_page(soup: BeautifulSoup) -> str:
-    for tag in ["header", "footer", "nav"]:
-        t = soup.find(tag)
-        if t: t.decompose()
-    return soup.get_text().replace("\n", " ").replace("\xa0", " ").strip()
+# --------------------- 🧠 Assistant 초기화 ---------------------
+ASSISTANT_ID = "asst_xxx"  # 👉 너의 assistant_id로 바꿔줘
 
-# -------------------- LOAD + FILTER --------------------
-@st.cache_data(show_spinner="🔄 Loading documents...")
-def load_product_docs(product_keyword: str):
-    splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=1000, chunk_overlap=150)
-    loader = SitemapLoader(SITEMAP_URL, parsing_function=parse_page)
-    loader.requests_per_second = 2
-    all_docs = loader.load()
-    filtered_docs = [doc for doc in all_docs if product_keyword in doc.metadata["source"]]
-    split_docs = splitter.split_documents(filtered_docs)
-    db = FAISS.from_documents(split_docs, OpenAIEmbeddings(openai_api_key=openai_api_key))
-    return db.as_retriever()
+if "thread_id" not in st.session_state:
+    thread = openai.beta.threads.create()
+    st.session_state.thread_id = thread.id
+else:
+    thread = openai.beta.threads.retrieve(st.session_state.thread_id)
 
-retriever = load_product_docs(PRODUCTS[product])
+# --------------------- 📎 파일 업로드 처리 ---------------------
+if uploaded_file and "file_uploaded" not in st.session_state:
+    with st.spinner("📚 Uploading file..."):
+        # 1. 파일 저장
+        bytes_data = uploaded_file.read()
+        file_path = f"./{uploaded_file.name}"
+        with open(file_path, "wb") as f:
+            f.write(bytes_data)
 
-# -------------------- ANSWER CHAIN --------------------
-def get_answers(inputs):
-    question = inputs["question"]
-    docs = inputs["docs"]
-    chain = answer_prompt | llm
-    return {
-        "question": question,
-        "answers": [
-            {
-                "answer": chain.invoke({"context": doc.page_content, "question": question}).content,
-                "source": doc.metadata.get("source", "unknown"),
-                "date": doc.metadata.get("lastmod", "unknown")
-            }
-            for doc in docs
-        ]
-    }
+        # 2. OpenAI에 파일 업로드
+        file = openai.files.create(
+            file=openai.file_from_path(file_path),
+            purpose="assistants"
+        )
 
-def choose_answer(inputs):
-    answers = inputs["answers"]
-    question = inputs["question"]
-    condensed = "\n\n".join(
-        f"{a['answer']}\nSource: {a['source']}\nDate: {a['date']}" for a in answers
+        # 3. 첨부 메시지 생성 (❗attachments 사용!)
+        openai.beta.threads.messages.create(
+            thread_id=thread.id,
+            role="user",
+            content="Here is the file I'd like help with.",
+            attachments=[
+                {
+                    "file_id": file.id,
+                    "tools": [{"type": "file_search"}] 
+                }
+            ]
+        )
+        # 4. 업로드 완료 표시
+        st.session_state.file_uploaded = True
+        st.success("✅ File uploaded and attached to assistant.")
+
+# --------------------- 💬 대화 처리 ---------------------
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+# 이전 대화 표시
+for chat in st.session_state.chat_history:
+    with st.chat_message(chat["role"]):
+        st.markdown(chat["message"])
+
+# 사용자 입력
+user_input = st.chat_input("Ask something about the file...")
+
+if user_input:
+    with st.chat_message("user"):
+        st.markdown(user_input)
+
+    # 기록 저장
+    st.session_state.chat_history.append({"role": "user", "message": user_input})
+
+    openai.beta.threads.messages.create(
+        thread_id=thread.id,
+        role="user",
+        content=user_input,
     )
-    chain = choose_prompt | llm
-    return chain.invoke({"question": question, "answers": condensed})
 
-# -------------------- MAIN --------------------
-query = st.text_input("💬 Ask your question about Cloudflare docs")
+    with st.spinner("🤖 Thinking..."):
+        run = openai.beta.threads.runs.create(
+            thread_id=thread.id,
+            assistant_id=ASSISTANT_ID
+        )
 
-if query:
-    chain = (
-        {
-            "docs": retriever,
-            "question": RunnablePassthrough()
-        }
-        | RunnableLambda(get_answers)
-        | RunnableLambda(choose_answer)
-    )
+        while True:
+            run_status = openai.beta.threads.runs.retrieve(
+                thread_id=thread.id, run_id=run.id
+            )
+            if run_status.status == "completed":
+                break
 
-    with st.spinner("Thinking..."):
-        result = chain.invoke(query)
-        st.markdown(result.content.replace("$", "\$"))
+        messages = openai.beta.threads.messages.list(thread_id=thread.id)
+        latest = messages.data[0].content[0].text.value
+
+        with st.chat_message("assistant"):
+            st.markdown(latest)
+
+        st.session_state.chat_history.append({"role": "assistant", "message": latest})
